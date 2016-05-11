@@ -1,0 +1,154 @@
+As discussed earlier, the C++ \const{} keyword allows programmers to declare,
+in some sense, that a value should not change.
+In this section, we explain the specific guarantees that C++ provides, and we
+present the deep immutability variant of these guarantees that we verify.
+
+\subparagraph*{Meaning of \const{} on C++ primitive and pointer types.}
+
+The meaning of \const{} in C++ is an extension of its meaning in C.
+We start by describing the common meaning of \const{} across C and C++, applying
+to primitive and pointer types.
+In these languages, the \const{}-ness of a memory location depends on the
+qualifiers of the variable through which the location is accessed; our
+motivating example illustrated a change in \const{}-ness through a cast, in
+function \texttt{evil()}, that is allowed by both C and C++.
+
+Developers may \const{}-qualify primitive types such as \code{\texttt{int}},
+resulting in immutable object types like \code{\const{} \texttt{int}}.
+When variable $v$ has primitive \const{}-qualified type, the C++ type system
+prevents developers from assigning to $v$ after its definition; i.e. it
+prevents writes to $v$.
+In this case, \const{} behaves like \texttt{final} in Java, which also
+prevents re-assignment.
+
+For pointer types, such as \code{\texttt{int *}}, developers may
+\const{}-qualify both the pointee and pointer type.
+The \const{} qualifier applies to the type directly to the left of it; if there
+is nothing to the left, then \const{} applies to the right.
+If a variable has type \code{\texttt{int *}\const{}}, developers may not change
+the address value of the variable (where it points to), but they may dereference
+the location and change the value it points to.
+A different type is \code{\texttt{int} \const{} \texttt{*}} (also known as
+\code{\const{} \texttt{int} \texttt{*}}), which allows the address value to
+change, but not the value pointed-to by the variable.
+This type represents a read-only reference.
+The \const{} qualifier may also apply to both the pointer and pointee types
+(\code{\texttt{int} \const{} \texttt{*} \const{}}), which prevents writes to
+both the address value and the value pointed-to.
+If all pointers to a value are read-only references, then the value pointed-to
+is immutable.
+C++ references can be thought of as \const{}-qualified pointers; a developer may
+not write to the reference address value.
+However, in contrast with pointers, developers cannot cast away reference
+address value \const{}-ness and re-assign the address value; this property is
+enforced by the language.
+
+\begin{listing}[!htb]
+  \caption{The \const{} qualifier may apply to C++ member functions.}
+  \label{listing-const-background}
+  \centering
+  \includestandalone{listing/const-background}
+\end{listing}
+
+\subparagraph*{Meaning of \const{} on C++ object types.}
+We continue by exploring the meaning of \const{} in C++-specific contexts.
+When a C++ object type is \const-qualified,
+the developer may only call member functions declared with a
+\const{} qualifier.
+
+\const{}-qualifying a member function has two effects.
+First, \const{}-qualifying a member function allows it to be called on a
+\const{}-qualified receiver object.
+Furthermore, inside the function, the type qualifiers of the receiver object's
+fields are treated as \const{}.
+
+Conceptually, each C++ class provides two
+interfaces: the \const{}-qualified interface and the non-\const{} qualified
+interface.
+A \const{}-qualified reference is meant to be a read-only
+reference, although C++ enforces no guarantees.
+One of our goals is to evaluate whether read-only guarantees hold in practice.
+When an object has non-\const{} type, then the developer may call all methods on
+that object\footnote{There is a small exception: on a non-\const{} object, the
+developer cannot call \const{}-qualified methods that are hidden due to
+overloading by a non-\const{}-qualified method of the same signature.}.
+On the other hand, when an object has \const{} type, then the developer may only
+call methods on that object that are \const{}-qualified.
+
+Consider class \texttt{Pointish}, defined in
+Listing~\ref{listing-const-background}.
+As written, the developer could call all methods on a non-\const{}-qualified
+object of type \texttt{Pointish}.
+On the other hand, the developer may only call the \texttt{getX()} method on a
+\const{}-qualified \texttt{Pointish} object.
+
+The second effect of \const{}-qualifying a function changes the type qualifiers of
+fields inside the function.
+In our example, field \texttt{x} becomes \texttt{int}
+\const{} within \const{}-qualified member functions.
+The compiler successfully compiles \texttt{getX()}, since there are no
+writes to \texttt{x} or \texttt{y}.
+But, if \texttt{setX()} was \const{}-qualified, the compiler would refuse to
+compile the code, since the type of \texttt{x} would be treated as \const{}
+\texttt{int} and \texttt{setX()} contains a write to that variable.
+
+In C++, without using \const{} escape hatches, developers may re-assign
+fields in non-\const{} qualified methods and may not re-assign fields in
+\const{}-qualified methods.
+In all methods, developers are permitted to mutate state outside of
+re-assignment (through references or pointers).
+This type of immutability is referred to as \emph{shallow immutability}.
+
+A C++ \const{}-qualified stack/global object would be considered a shallow
+\emph{immutable object}.
+That is, without escape hatches, developers cannot create non-\const{}
+references (including through pointers) to such a \const{}-qualified object.
+However, as we discuss next, developers may indeed remove the \const{} qualifier
+on references to the \const{}-qualified object.
+Therefore, C++ does not strongly enforce the concept of an immutable object.
+
+\subparagraph*{Working around \const{} restrictions.}
+Practical type systems appear to require escape hatches.
+C++'s escape hatches for \const{} include casting (the sole
+escape hatch in C) and \texttt{mutable}.
+Also, C++ \const{} does not specify deep immutability.
+ConstSanitizer dynamically observes executions to
+monitor uses of escape hatches and deep immutability.
+
+Most type systems permit casting between types.
+C-style casts (\code{(const A)a}) and C++ \texttt{const\_cast}s can
+add or remove \const{} qualifiers.
+\const{} manipulation may also occur through unions and
+\texttt{reinterpret\_cast}s.
+ConstSanitizer ignores casts, instead using the declared type of
+a variable or function argument.
+When there is a mismatch between variable and function argument types, we
+persist all \const{} information.
+
+For \const{} member functions, ``\texttt{mutable}'' instructs the
+compiler to not add the implicit \const{} type qualifier otherwise imposed on
+fields inside those functions.
+In Listing~\ref{listing-const-background}, if \texttt{x} were instead
+declared as \code{\texttt{mutable int x}}, then \texttt{setX()} could be
+\const{}-qualified and still compile.
+ConstSanitizer would then report the write to field \texttt{x} whenever
+\texttt{setX()} was called on a \const{} receiver object, as we consider the
+write to be a breach of that object's immutability.
+
+ConstSanitizer goes beyond C++'s guarantees with respect to transitivity.
+Consider again Listing~\ref{listing-const-background}.
+Field \texttt{y} has type \code{int *}; within a \const{}-qualified member
+function, its type is \code{int *const}.
+C++ therefore prevents writes to \texttt{y} inside a \const{}-qualified member
+function.
+However, it does not prevent writes to \texttt{*y} without further explicit
+markup (i.e. \code{int const *const}).
+We call writes to locations like \texttt{*y} \emph{transitive writes}.
+
+C++ only guarantees shallow immutability---that is, field values
+directly stored in a \const{}-qualified class do not change.
+If a field has pointer type, C++ ensures that the pointer value does not change,
+but does not guarantee anything about the value pointed to.
+ConstSanitizer verifies \emph{deep immutability} through transitive writes, and
+enables us to answer the empirical question of whether extant programs preserve
+deep immutability or not.

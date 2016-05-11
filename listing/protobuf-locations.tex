@@ -1,0 +1,49 @@
+\documentclass[tikz]{standalone}
+
+\usepackage{fontspec}
+
+\usetikzlibrary{arrows}
+\usetikzlibrary{calc}
+\usetikzlibrary{decorations.pathreplacing}
+\usetikzlibrary{positioning}
+\usetikzlibrary{matrix}
+
+\usepackage{fontspec}
+
+\begin{document}
+
+\begin{tikzpicture}
+  [node distance=1cm, >=stealth',
+  every node/.style={font=\footnotesize},
+  every matrix/.style={fill=black!15, inner sep=1mm, row sep=0.5mm,
+                        matrix of nodes, nodes in empty cells,
+                        minimum height=0.5em, minimum width=.5em,
+                        nodes={anchor=base, inner sep=0, font=\ttfamily\footnotesize}}]
+
+  \matrix (AttachComments) {
+v & o & i & d &   & P & a & r & s & e & r & : & : & L & o & c & a & t & i & o & n & R & e & c & o & r & d & e & r & : & : & A & t & t & a & c & h & C & o & m & m & e & n & t & s & ( & |[black!50]|. & |[black!50]|. & |[black!50]|. & ) &   & c & o & n & s & t &   & \{ &   &   &   &   \\
+  &   & |[black!50]|t & |[black!50]|h & |[black!50]|i & |[black!50]|s & |[black!50]|- & |[black!50]|> & l & o & c & a & t & i & o & n & \_ & - & > & m & u & t & a & b & l & e & \_ & l & e & a & d & i & n & g & \_ & c & o & m & m & e & n & t & s & ( & ) & - & > & s & w & a & p & ( & * & l & e & a & d & i & n & g & ) & ; \\
+\} &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+  };
+
+  \matrix [below=of AttachComments.south west, anchor=north west] (mutable) {
+s & t & d & : & : & s & t & r & i & n & g & * &   & S & o & u & r & c & e & C & o & d & e & I & n & f & o & \_ & L & o & c & a & t & i & o & n & : & : & m & u & t & a & b & l & e & \_ & l & e & a & d & i & n & g & \_ & c & o & m & m & e & n & t & s & ( & ) &   & \{ \\
+  &   & |[black!50]|t & |[black!50]|h & |[black!50]|i & |[black!50]|s & |[black!50]|- & |[black!50]|> & l & e & a & d & i & n & g & \_ & c & o & m & m & e & n & t & s & \_ &   & = &   & n & e & w &   & : & : & s & t & d & : & : & s & t & r & i & n & g & ; &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+\} &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+};
+
+  \draw[black!50, very thick] ($ (AttachComments.south west)!0.50!(mutable.north west) $) -- ++(11.8cm, 0);
+
+  \node [above, anchor=south east, black!50]
+        at ($ (AttachComments.south west)!0.55!(mutable.north west) + (11.8cm,0) $)
+        {\texttt{parser.cc}};
+  \node [below, anchor=north east, black!50]
+        at ($ (AttachComments.south west)!0.55!(mutable.north west) + (11.8cm, 0) $)
+        {\texttt{descriptor.pb.h}};
+
+  \draw [->] let \p1 = (AttachComments-2-3.north west),
+                 \p2 = (mutable-1-1.west)
+              in (\p1) -- ++(-1cm, 0) -- (\x1 - 1cm, \y2) -- (\p2);
+\end{tikzpicture}
+
+\end{document}

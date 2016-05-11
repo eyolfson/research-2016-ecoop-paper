@@ -1,0 +1,144 @@
+\documentclass[a4paper, UKenglish]{lipics-v2016}
+ 
+\usepackage{microtype}
+\usepackage[table]{xcolor}
+\usepackage{booktabs}
+\usepackage{makecell}
+\usepackage{ucs}
+
+\usepackage{newfloat}
+\DeclareFloatingEnvironment[fileext=lol, name=Listing]{listing}
+
+\usepackage{standalone}
+
+\usepackage{tikz}
+\usetikzlibrary{arrows}
+\usetikzlibrary{calc}
+\usetikzlibrary{decorations.pathreplacing}
+\usetikzlibrary{positioning}
+\usetikzlibrary{matrix}
+
+\usepackage{enumitem}
+
+\bibliographystyle{plainurl}
+
+\usepackage[firstpage]{draftwatermark}
+\SetWatermarkText{\hspace*{6.3in}\raisebox{5in}{\includegraphics[scale=0.1]{aec-badge-ecoop}}}
+\SetWatermarkAngle{0}
+
+\newcommand{\code}[1]{{\ttfamily #1}}
+
+\newcommand{\const}{{\bfseries \ttfamily const}}
+
+\newcommand*\circled[1]{\tikz[baseline=(char.base)]{
+            \node[shape=circle,draw,inner sep=2pt] (char) {#1};}}
+
+\newcommand{\wtc}{write-through-\const{}}
+\newcommand{\wstc}{writes-through-\const{}}
+\newcommand{\wtcq}{write-through-\const{}-qualifier}
+\newcommand{\wstcq}{writes-through-\const{}-qualifier}
+\newcommand{\wtcqs}{write-through-\const{}-qualifiers}
+\newcommand{\wstcqs}{writes-through-\const{}-qualifiers}
+\newcommand{\Wstcqs}{Writes-through-\const{}-qualifiers}
+\newcommand{\wtcqd}{write-through-\const{}-qualified}
+\newcommand{\wstcqd}{writes-through-\const{}-qualified}
+
+% Author macros::begin %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\title{C++ \const{} and Immutability: An Empirical Study of Writes-Through-\const{}}
+
+\author[1]{Jon Eyolfson}
+\author[2]{Patrick Lam}
+\affil[1]{University of Waterloo\\
+  Waterloo, ON, Canada\\
+  \texttt{jeyolfso@uwaterloo.ca}}
+\affil[2]{University of Waterloo\\
+  Waterloo ON, Canada\\
+  \texttt{patrick.lam@uwaterloo.ca}}
+\authorrunning{J. Eyolfson and P. Lam}
+
+\Copyright{Jonathan Eyolfson and Patrick Lam}
+
+%% mandatory: Please choose ACM 1998 classifications from
+%% http://www.acm.org/about/class/ccs98-html . E.g., cite as
+%% "F.1.1 Models of Computation". 
+\subjclass{D.3.3 Language Constructs and Features}
+% mandatory: Please provide 1-5 keywords
+\keywords{empirical study, dynamic analysis, immutability}
+% Author macros::end %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%Editor-only macros:: begin (do not touch as author)%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\EventEditors{John Q. Open and Joan R. Acces}
+\EventNoEds{2}
+\EventLongTitle{42nd Conference on Very Important Topics (CVIT 2016)}
+\EventShortTitle{CVIT 2016}
+\EventAcronym{CVIT}
+\EventYear{2016}
+\EventDate{December 24--27, 2016}
+\EventLocation{Little Whinging, United Kingdom}
+\EventLogo{}
+\SeriesVolume{42}
+\ArticleNo{23}
+% Editor-only macros::end %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+The ability to specify immutability in a programming language is a powerful tool
+for developers, enabling them to better understand and more safely transform
+their code without fearing unintended changes to program state.
+The C++ programming language allows developers to specify a form of immutability
+using the \const{} keyword.
+In this work, we characterize the meaning of the C++ \const{} qualifier and
+present the ConstSanitizer tool, which dynamically verifies a stricter form of
+immutability than that defined in C++: it identifies \const{} uses that are
+either not consistent with transitive immutability, that write to mutable
+fields, or that write to formerly-\const{} objects whose \const{}-ness has been
+cast away.
+
+We evaluate a set of 7 C++ benchmark programs to find \wstc{}, establish root
+causes for how they fail to respect our stricter definition of immutability, and
+assign attributes to each write (namely: synchronized, not visible,
+buffer/cache, delayed initialization, and incorrect).
+ConstSanitizer finds 17 archetypes for writes in these programs which do not
+respect our version of immutability.
+Over half of these seem unnecessary to us.
+Our classification and observations of behaviour in practice contribute to the
+understanding of a widely-used C++ language feature.
+\end{abstract}
+
+\section{Introduction}
+\input{introduction}
+
+\section{Motivating Example}
+\label{section:motivating-example}
+\input{motivating-example}
+
+\section{Meaning of \const{} in C++}
+\label{section:background}
+\input{background}
+
+\section{Technique}
+\label{section:technique}
+\input{technique}
+
+\section{Classification of \wstc{}}
+\label{section:classification}
+\input{classification}
+
+\section{Results}
+\label{section:results}
+\input{results}
+
+\section{Related Work}
+\label{section:related-work}
+\input{related-work}
+
+\section{Conclusion}
+\label{section:conclusion}
+\input{conclusion}
+
+\bibliography{eyolfson}
+
+\end{document}

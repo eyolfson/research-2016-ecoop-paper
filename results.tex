@@ -1,0 +1,567 @@
+We evaluated our ConstSanitizer tool on 7 C++ software projects, plus 1 C project.
+We attempted to choose significant benchmarks using these
+guidelines:
+
+\begin{enumerate}
+  \item must span a range of application areas: applications and libraries; small,
+        medium, and large projects; interactive and non-interactive;
+  \item are used by the community: the Google projects are the most popular on
+        GitHub; the applications are popular among FOSS users; contributor-group
+        sizes vary from a core group to a large community; and,
+  \item must extensively use \const{} constructs.
+\end{enumerate}
+
+\noindent
+A ConstSanitizer report indicates that a write that would not be allowed under
+deep immutability occurred through a read-only reference.
+Such writes are allowed under C++ semantics.
+They are only a departure from the \const{} semantics that we experiment
+with (i.e. deep immutability with no casts and no mutable).
+Our experiments classify \wstc{} observed in actual \const{}-using programs.
+Classifying these writes provides us valuable insight about \const{} usage in
+practice, which will guide future work.
+
+Our approach was to modify the project's build system to use our tool and to
+disable optimizations.
+We then ran the project's test suite, when available, and collected output from
+our instrumentation.
+Using this output we categorized the writes that we found, assigning root causes
+and attributes.
+Along with the number of static locations of writes that we found
+(\textbf{bolded}), we also report the number of dynamic occurrences of each
+write over observed executions.
+All else being equal, dynamic counts can help prioritize \wstc{}, with
+more-frequent locations to be investigated first.
+We refer to these dynamic occurrences of writes as ``occurrences'' in the
+sequel.
+Table~\ref{table:projects} summarizes our benchmark projects.
+
+\begin{table}[!htb]
+  \centering
+  \caption{We ran our experiments across 7 C++ (and 1 C) software projects;
+           ConstSanitizer introduces a build slowdown of
+           1.05$\times$--1.40$\times$ across all projects.}
+  \label{table:projects}
+  \begin{tabular}{l l r l r}
+    & \textbf{Name} & \textbf{Version} & \textbf{Description}
+    & \makecell[r]{\textbf{Build} \\ \textbf{Slowdown}}\\
+    \midrule
+    C++ & Protobuf & 2.6.1 & Serialization framework & 1.40$\times$\\
+    C++ & LevelDB & 1.18 & Key/value database & 1.05$\times$\\
+    C++ & fish shell & 2.2.0 & UNIX shell & 1.32$\times$\\
+    C++ & Mosh (mobile shell) & 1.2.5 & SSH replacement & 1.26$\times$\\
+    C++ & LLVM TableGen & 3.7.0 & Domain-specific generator & ---\phantom{\- $\times$} \\
+    C++ & Tesseract & 3.04.00 & OCR engine & 1.10$\times$\\
+    C++ & Ninja & 1.6.0 & Build system & 1.20$\times$\\
+    C & Weston & 1.9.0 & Wayland compositor & 1.28$\times$\\
+  \end{tabular}
+\end{table}
+
+We recorded relative overhead introduced by our instrumentation with respect to
+both building and testing times on the longest-running projects, Protobuf and
+LevelDB.
+Table~\ref{table:projects} includes build slowdowns induced by our tool, which
+ranged between 1.05$\times$ and 1.40$\times$.
+Our tool caused a 3.3$\times$ slowdown and 1.3$\times$ slowdown in test
+execution times for Protobuf and LevelDB respectively.
+The remaining projects were either interactive, or did not have long enough
+running test suites to get meaningful results.
+We do not any report LLVM TableGen numbers because we built it (with
+instrumentation) as part of the LLVM build process and were not able to build
+the executable separately.
+
+\subsection{Protobuf}
+
+Protobuf is Google's serializing framework for structured data, consisting of
+about 214~000 lines of C++ code.
+We analyzed version 2.6.1 of Protobuf by running its test suite, which contains
+5 tests.
+Table~\ref{table:protobuf-violations} summarizes the Protobuf results.
+ConstSanitizer found {\bf 76} static write locations (and 127~644 occurrences).
+We describe 5 archetypes for these writes.
+An archetype is a group of writes that we judged to be similar; the writes may
+happen at different source locations.
+
+\begin{table}[!htb]
+  \centering
+  \caption{Protobuf shows 5 archetypes for {\bf 76} writes through \const{} resulting in 127~644
+           occurrences.}
+  \label{table:protobuf-violations}
+  \begin{tabular}{l r r c c}
+    \textbf{Archetype} & \textbf{Locations} & \textbf{Occurrences}
+                     & \textbf{Root Cause} & \textbf{Attributes} \\
+    \midrule
+    Generator printer & {\bf 7} & 118464  & T & B \& N \& S \\
+    Message cache sizes & {\bf 61} & 7158 & M & B \& S \\
+    Source code locations & {\bf 4} & 1898 & T & I \\
+    Linked list operations & {\bf 2} & 84 & M & I \& S \\
+    Generate initialization \\
+    \hspace*{2em}  method & {\bf 2} & 40 &  M & D \& N \& S \\
+  \end{tabular}
+\end{table}
+
+The ``Generator printer'' archetype occurred most often.
+Listing~\ref{listing-protobuf-generator-printer} presents a representative
+expanded stack trace.
+The function at the top of the listing shows the initiation of the write in
+\code{Generator}'s \const-qualified \code{Generate} method.
+This method calls \code{PrintTopBoilerplate}, passing a pointer to a mutable
+\code{io::Printer}.
+Then, \code{Printer}'s \code{WriteRaw} method modifies (root cause T) two fields:
+\code{buffer\_} and \code{buffer\_size\_}.
+These fields are protected by a lock, act as a buffer, and are not visible
+outside the class (which is just a printer).
+This archetype also includes other \code{Print}-like calls with different source
+locations but a common explanation.
+
+\begin{listing}[!htb]
+  \caption{Protobuf's Generator class performing transitive \wtc{} to a Printer
+           field.}
+  \label{listing-protobuf-generator-printer}
+  \centering
+  \includestandalone{listing/protobuf-generator-printer}
+\end{listing}
+
+The ``Generate initialization method'' archetype is related to ``Generator
+printer''.
+Listing~\ref{listing-protobuf-generator-lazy} shows this archetype.
+The \code{printer\_} field was initialized as seen above.
+C++ allows this write due to the \texttt{mutable} specifier.
+Another field, \code{file\_}, is lazily initialized as well.
+Both of these fields are protected by the same lock, and are not externally
+visible outside the class.
+
+\begin{listing}[!htb]
+  \caption{Protobuf's Generate initialization method performing lazy initialization.}
+  \label{listing-protobuf-generator-lazy}
+  \centering
+  \includestandalone{listing/protobuf-generator-lazy}
+\end{listing}
+
+We show an example of the ``linked list operations'' archetype in
+Listing~\ref{listing-protobuf-list}.
+Here, the \code{depart} method grabs a lock, and uses a pointer with type
+\code{linked\_ptr\_internal \const{} *}, so that the \const{} applies to what is
+pointed to, not to the pointer.
+The method then modifies the \code{next\_} field of a valid object at the point
+indicated by the comment.
+The root cause here is \code{mutable}: the \code{next\_} field is declared
+\code{mutable linked\_ptr\_internal const* next\_}.
+This write is a delayed initialization, not visible, and synchronized.
+
+\begin{listing}[!htb]
+  \caption{Protobuf using Google test linked list that writes internally.}
+  \label{listing-protobuf-list}
+  \centering
+  \includestandalone{listing/protobuf-list}
+\end{listing}
+
+Listing~\ref{listing-protobuf-cache} shows the ``Message cache
+sizes'' archetype.
+The write is protected by a lock, and is allowed by C++ because the field is
+\texttt{mutable}.
+However, this write, while involved with caching, is externally visible.
+The method \code{void SetCachedSize(int size) const} enables
+external code to modify this field through a \const{}
+reference to the containing object.
+
+\begin{listing}[!htb]
+  \setlength{\belowcaptionskip}{-1em}
+  \caption{Protobuf writing to a message's cached size field.}
+  \label{listing-protobuf-cache}
+  \centering
+  \includestandalone{listing/protobuf-cache}
+\end{listing}
+
+Listing~\ref{listing-protobuf-locations} shows the ``Source code locations''
+archetype.
+The \code{mutable\_leading\_comments} method, which includes ``mutable'' in its
+name, is not declared as \const{}, and thus allows writes.
+Its implementation writes to the \code{location\_} field; we show an example of
+a caller which causes such a write.
+The \code{location\_} field is externally-visible, so this is a clearly
+incorrect externally-visible transitive write; we assign attribute I.
+
+\begin{listing}[!htb]
+  \caption{Protobuf writing to a source location object.}
+  \label{listing-protobuf-locations}
+  \centering
+  \includestandalone{listing/protobuf-locations}
+\end{listing}
+
+We also found an archetype involving writing data to a message.
+This included 133 unique source locations, occurring 14~638 times in total.
+However, the code is heavily inlined and the build system appears to overwrite
+optimization settings for this subdirectory.
+Manual inspection of the code revealed no obvious writes.
+We believe this is a result of optimizations causing invalid debugging
+information.
+We thus omitted this archetype from Table~\ref{table:protobuf-violations}.
+
+\subsection{LevelDB}
+
+LevelDB (1.18) is Google's lightweight key/value database library, consisting of
+approximately 18~000 lines of C++ code.
+The test suite contains 23 test drivers.
+There were 6 archetypes and also {\bf 6} root source locations for these writes.
+These locations contributed to 13~792 occurrences over the test drivers.
+Table~\ref{table:leveldb-violations} shows a summary of our findings for
+LevelDB.
+
+\begin{table}[!htb]
+  \centering
+  \caption{LevelDB shows writes from {\bf 6} source locations, with 13~792
+           occurrences in total.}
+  \label{table:leveldb-violations}
+  \begin{tabular}{l  r  c  c }
+    \textbf{Location} & \textbf{Occurrences} & \textbf{Root Cause}
+    & \textbf{Attributes} \\
+    \midrule
+    \texttt{db/db\_test.cc:40} & 10311 & T & N \& S \\
+    \texttt{util/cache.cc:315} & 2841 & T & B \& S\\
+    \texttt{db/snapshot.h:54} & 319 & T & I \\
+    \texttt{db/snapshot.h:55} & 319 & T & I \\
+    \texttt{helpers/memenv/memenv.cc:274} & 1 & T & I \& S \\
+    \texttt{util/testutil.h:42} & 1 & T & N \\
+  \end{tabular}
+\end{table}
+
+Listing~\ref{listing-leveldb-counter} shows the source location that caused
+the majority of the occurrences.
+This code extends the \code{RandomAccessFile} class to add an atomic counter
+field, \code{counter\_}, that tracks the number of read calls.
+The root cause is that \code{counter\_} is a pointer and is transitively written
+to.
+The reason for this write is test controllability: this class is part of the
+test infrastructure.
+Yet it must override the monitored call (and thus must be \const{}).
+This class is meant for testing purposes only, so we concluded the write was not
+visible outside the class---the counter is only used in the testing code.
+
+\begin{listing}[!htb]
+  \caption{LevelDB write in \texttt{db\_test.cc:40} incrementing counter tracking
+           \# of writes to a file.}
+  \label{listing-leveldb-counter}
+  \centering
+  \includestandalone{listing/leveldb-counter}
+\end{listing}
+
+Listing~\ref{listing-leveldb-cache} shows a modification to a caching structure
+that generates a new identifier.
+This cache is a field, \code{block\_cache}, in \code{options}, which is declared
+as \code{const Options\&} in \code{Table::Open}.
+The root cause is a transitive write, since the code dereferences a field of a
+\const{} object to do the write.
+This write is protected by a lock and clearly involved in caching.
+However, it appears that other code outside of \code{Options} uses this block
+cache.
+
+\begin{listing}[!htb]
+  \caption{LevelDB write in \texttt{cache.cc:315} creating a new block cache in
+           \code{\const{} Options} object.}
+  \label{listing-leveldb-cache}
+  \centering
+  \includestandalone{listing/leveldb-cache}
+\end{listing}
+
+Listing~\ref{listing-leveldb-list} shows a modification of a linked list node
+accessed through two pointer dereferences.
+This corresponds to both \texttt{snapshot.h} locations shown in the table.
+This code modifies the pointers obtained from following its own nodes,
+performing a transitive write through a \const{} qualifier.
+We do not know why the developers declared \texttt{s} as \const{} since it is
+also destroyed at the end of the method. In any case, we assigned attribute I.
+
+\begin{listing}[!htb]
+  \caption{LevelDB write in \texttt{snapshot.h} deleting a list element and
+           updates pointers.}
+  \label{listing-leveldb-list}
+  \centering
+  \includestandalone{listing/leveldb-list}
+\end{listing}
+
+Listing~\ref{listing-leveldb-env} shows a \wtc{} in the \code{InMemoryEnv}
+class.
+As with the cache, the root cause is a transitive write: in the caller,
+\code{options} is declared \code{const Options\&}.
+Unlike the caching example, this file isn't involved in caching and appears to
+be a visible change to \code{options}.
+This write is protected by a lock, giving attribute I \& S.
+
+\begin{listing}[!htb]
+  \caption{LevelDB write in \texttt{memenv.cc} changing the environment in
+           options object.}
+  \label{listing-leveldb-env}
+  \centering
+  \includestandalone{listing/leveldb-env}
+\end{listing}
+
+Listing~\ref{listing-leveldb-test} shows the final \wtcq{} that we found for
+LevelDB.
+The caller location is the same as in Listing~\ref{listing-leveldb-env} above.
+In this case, however, the containing class extends \code{InMemoryEnv} and adds
+a field to count the number of errors (for testing purposes only).
+Therefore we attribute this write as being not visible---it is only used in
+tests.
+
+\begin{listing}[!htb]
+  \caption{LevelDB write in \texttt{testutil.h} injecting faults into
+           the test suite.}
+  \label{listing-leveldb-test}
+  \centering
+  \includestandalone{listing/leveldb-test}
+\end{listing}
+
+\subsection{fish shell}
+
+fish shell (2.2.0) is a UNIX shell providing advanced features, consisting of
+approximately 48~000 lines of C++ code.
+We compiled the project with our tool and executed an instance of the shell.
+Our workload launched the shell and immediately exited.
+We found writes from {\bf 4} unique source locations for 98 occurrences in total.
+All locations are within the \code{exchange} function.
+Listing~\ref{listing-fish} shows this function along with a snippet of
+\code{\_wgetopt\_internal} that calls \code{exchange}.
+The root cause is that the \const{}-qualified \code{argv}
+variable gets cast to non-\const{} and then passed to \code{exchange}.
+This write shows that the \const{}-qualifier on \code{argv} is incorrect and
+should not be included.
+
+\begin{listing}[!htb]
+  \caption{fish shell writing to \const{}-qualified \code{argv} object.}
+  \label{listing-fish}
+  \centering
+  \includestandalone{listing/fish}
+\end{listing}
+
+\subsection{Mosh (mobile shell)}
+
+Mosh (mobile shell) (1.2.5) is a remote terminal application that is a
+replacement for secure shell (SSH), consisting of about 13~000 lines of C++
+code.
+Our workload was to launch the mosh server and immediately terminate it.
+We found \wstc{} at {\bf 8} unique source locations (432 occurrences).
+Listing~\ref{listing-mosh} shows one of the writes.
+Mosh parsing code sets a flag to indicate completion.
+However, the developers declared the parser action as \const{} in the same
+method where they modify it.
+The root cause is that the variable \code{handled} is declared \code{public
+mutable}.
+We believe this is an incorrectly \const{} qualified variable.
+
+\begin{listing}[!htb]
+  \caption{Mosh handling terminal action with a \wtc{}.}
+  \label{listing-mosh}
+  \centering
+  \includestandalone{listing/mosh}
+\end{listing}
+
+\subsection{LLVM TableGen}
+
+We instrumented LLVM's (3.7) TableGen executable, which uses domain-specific
+information to generate files with custom backends.
+This part of LLVM consists of approximately 34~400 lines of C++ code.
+It is primarily used in building LLVM itself.
+We added our instrumentation to the build system and observed reports from an
+instrumented version of TableGen executing as part of the build process.
+LLVM itself is a large body of code with too many \wstcq{} objects to manually
+classify.
+In TableGen, we found writes from {\bf 3} unique source locations (282
+occurrences).
+
+The handling code for DFAs contains some puzzling writes, shown in
+Listing~\ref{listing-llvm-dfa}.
+The write immediately follows an instantiation of a \code{\const{} State} object.
+The \code{State} class itself is only available in a file's translation unit
+(not usable outside the file), which may indicate that the \code{State} is not
+intended to be widely used.
+\code{State} only contains \const{} methods and all of its fields (except one
+explicitly declared \const{}) are mutable.
+Since all methods are \const{} there is no difference in callable methods
+between non-\const{} and \const{}-qualified access.
+In addition, since all other fields are mutable, developers are allowed to
+re-assign the same fields in a \const{} method as they would in a non-\const{}
+method.
+Since only one field doesn't have \texttt{mutable}, developers could achieve the
+same effect by making all methods non-\const{}, removing all \texttt{mutable}
+specifiers on fields, and changing the one field that did not have
+\texttt{mutable} to be \const{} qualified.
+
+\begin{listing}[!htb]
+  \caption{LLVM DFA code marks \texttt{State} \const{} for no apparent reason.}
+  \label{listing-llvm-dfa}
+  \centering
+  \includestandalone{listing/llvm-dfa}
+\end{listing}
+
+The other write is in the code that computes a sub-register index for code
+generation.
+Listing~\ref{listing-llvm-subreg} shows the containing method.
+The root cause here is that the \code{LaneMask} field is mutable.
+The write caches the value.
+However, this value is not used in any other methods.
+
+\begin{listing}[!htb]
+  \caption{LLVM SubReg writes to a \texttt{mutable} field in a \const{} method.}
+  \label{listing-llvm-subreg}
+  \centering
+  \includestandalone{listing/llvm-subreg}
+\end{listing}
+
+\subsection{Tesseract}
+
+Tesseract (3.04.00) is an optical character recognition (OCR) engine maintained
+by Google, consisting of 147~000 lines of C++ code.
+This project does not contain any easy-to-run tests.
+We compiled it with our tool and ran it with invalid arguments.
+With our limited knowledge of Tesseract's usage, we were not able to cause the
+core algorithm to execute.
+However, we found a strange write, shown in Listing~\ref{listing-tesseract}.
+The root cause is that the \code{used\_} field is mutable.
+This write appears to be an incorrect usage of \const{}.
+Strangely, however, the comments indicate that is a defensive write against
+possible further \wstcqs{}.
+
+\begin{listing}[!htb]
+  \caption{Tesseract performs a strange write in its string class.}
+  \label{listing-tesseract}
+  \centering
+  \includestandalone{listing/tesseract}
+\end{listing}
+
+\subsection{Ninja}
+
+Ninja (1.6.0) is a build system consisting of approximately 14~900 lines of C++
+code.
+It includes a modest test suite.
+Our tool reports 39 occurrences from calls to the standard library.
+All of these warnings have a {\bf single} source location outside the standard
+library: \texttt{src/disk\_interface\_test.cc:226:3}.
+Listing~\ref{listing-ninja} shows this static source location.
+This is a quick hack to run the test suite with the same API as normal clients.
+This field stores statistics that are checked in the test suite only.
+The field is mutable and not seen outside the test suite, so we give this write
+the ``not visible'' attribute.
+
+\begin{listing}[!htb]
+  \caption{Ninja \wtc{} in test code.}
+  \label{listing-ninja}
+  \centering
+  \includestandalone{listing/ninja}
+\end{listing}
+
+\subsection{Weston}
+
+While we focus on C++ in this work, our technique also works on \const{} in C
+programs.
+We therefore evaluated it on a C application.
+Since this is the sole C project, we omit Weston from the overall table
+of results (Table~\ref{table:other}).
+Weston (1.9.0) is a reference implementation of a Wayland compositor.
+It consists of approximately 85~000 lines of C code and the test suite has 20
+tests.
+We did not expect to see many writes, as most C standard library functions do
+not require \const{} (corresponding C++ library functions usually do), and
+also due to annoyances in using \const{} in C, which we describe below.
+However, even with a small test suite, we found {\bf 4} unique source locations
+for writes (accounting for 115 occurrences).
+
+All of the \wstc{} are transitive and came from parsing code.
+The argument option parser accounts for {\bf 3} locations.
+Listing~\ref{listing-weston-option} shows a write in the parser.
+Function \code{handle\_option} does not modify the pointer value of
+\code{option} but modifies its transitive data field.
+This does not change any data stored in the \code{weston\_option} structure,
+maintaining bitwise \const{}-ness.
+The \code{data} field's type is \code{void *} and the cast does not remove
+\const{}.
+Based on the function name, one might expect a write to the \code{data} field,
+not its pointee.
+
+\begin{listing}[!htb]
+  \caption{Weston option parser modifying its \const{} option argument.}
+  \label{listing-weston-option}
+  \centering
+  \includestandalone{listing/weston-option}
+\end{listing}
+
+The final location was in the configuration file parsing code.
+Listing~\ref{listing-weston-config} shows the
+\code{weston\_config\_section\_get\_uint} function dereferencing and modifying
+the \code{value} argument passed in from a field of a \const{} struct.
+As above, based on the function naming, one would expect any writes to happen
+through the \code{dest} pointer.
+This write does not modify any data stored in the \code{config\_command}
+structure and maintains bitwise \const{}-ness as well.
+
+\begin{listing}[!htb]
+  \caption{Weston config parser writing to its \code{value} argument.}
+  \label{listing-weston-config}
+  \centering
+  \includestandalone{listing/weston-config}
+\end{listing}
+
+We made an observation as to why \const{} may be unattractive to C developers:
+there is no clean way to initialize a structure analogous to C++
+constructors/destructors.
+A popular C idiom is to assign constructor-like functions signatures like
+\code{rec\_init(struct rec *r)}.
+This signature prevents initialization without casting: \code{\const{} struct
+rec r; rec\_init(\&r)} is illegal.
+However, it is cumbersome to always cast for constructor-like calls.
+One could change the signature of the function to \code{rec\_init(const struct
+rec *r)} and perform the cast in the function.
+However, that function would violate shallow immutability---it writes to fields
+as it initializes them.
+Using \const{} in C appears to require developers to ignore the casting away of
+\const{} qualifiers for constructor-like functions.
+
+\subsection{Summary}
+\label{section:results-summary}
+
+Table~\ref{table:other} summarizes the \wstcqs{} from benchmarks other than
+Protobuf and LevelDB.
+Across the 7 C++ projects we instrumented and ran, we observed 17 unique
+archetypes across a total of 142~288 dynamic occurrences.
+We manually divided these archetypes into 17 classifications.
+The root causes were evenly split between writes through mutable fields and
+transitive writes (8 of each) with one \wtc{} due to casting.
+Valid attributes were mostly with-synchronization and because the write was not
+visible (7 and 6 respectively).
+The other valid attributes, writing to a buffer/cache and delayed
+initialization, occurred 4 times and 1 time respectively.
+The majority attribute, in 9 cases, was that the write was incorrect and
+violated intuitive notions of what \const{} should mean.
+We reported our results to developers. 
+Within a few days the developers simply removed incorrect \const{} qualifiers
+in both fish and Mosh.
+
+\begin{table}[!htb]
+  \centering
+  \caption{\Wstcqs{} in our other benchmark programs were mainly incorrect uses
+           of \const{}.}
+  \label{table:other}
+  \small
+  \begin{tabular}{l l r c c}
+    \textbf{Project} & \textbf{Location} & \textbf{Occurrences}
+                     & \textbf{Root Cause} & \textbf{Attributes} \\
+    \midrule
+    fish shell & \texttt{wgetopt.cpp} & 98 & C & I \\
+    Mosh & \texttt{terminal.cc} & 432 & M & I \\
+    LLVM & \texttt{DFAPacketizerEmiter.cpp} & 112  & M & I \\
+    ~~TableGen    & \texttt{CodeGenRegisters.cpp} & 170  & M & B \& N \\
+    Tesseract & \texttt{ccutil/strngs.cpp} & 1 & M & I \\
+    Ninja & \texttt{disk\_interface\_test.cpp} & 39 &  M & N \\
+  \end{tabular}
+\end{table}
+
+We found 3 projects (LevelDB, Mosh, and Ninja) had writes that only occurred in
+tests.
+The \wstc{} we found were in testing code; writes were to counters only present
+in test environments.
+In Mosh, the fact that the writes were only for test purposes was not
+immediately obvious.
+However, discussions with the developers revealed that the \code{handled}
+variable was only used for debugging.
+All of these \wstc{} are related to test controllability, suggesting that this
+idiom should be supported directly in the programming language.

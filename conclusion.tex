@@ -1,0 +1,36 @@
+The \const{} qualifier in C++ is extensively used in real-world code,
+but developer intent behind \const{} usage is unclear.
+In this paper, we have presented our ConstSanitizer system.
+ConstSanitizer dynamically detects writes through \const{} qualifiers which are
+legal in C++ but which modify state transitively starting from a \const{}
+qualifier, write to mutable fields, or write to values whose \const{}-ness has
+been cast away.
+Our results show that, although writes through \const{} are ubiquitous across
+our 7 C++ and 1 C benchmark programs, there are only a small number (17) of
+archetypes these writes.
+We used our results to develop a classification of writes according to root
+cause (transitivity, mutable field, or const cast) and attributes (synchronized,
+not visible, buffer/cache, delayed initialization, incorrect).
+Our work helps understand how the \const{} qualifier is used in practice and
+leads us to conclude:
+
+\begin{itemize}
+  \item Developers definitely violate bitwise \const{} ({\bf RQ1}).
+  \item The majority of \wtc{} archetypes (9/17) are incorrect code
+        which observably change an object's state.
+  \item On our benchmarks, programs \wtc{} about equally often using transitive
+        writes through fields (8/17) and writes to mutable fields (8/17) ({\bf RQ2}).
+  \item We observed four classes (N, B, D, S, discussed in
+        Section~\ref{section:classification}) of valid reasons for \wstcqs{}.
+        For instance, sometimes developers \wtc{} to
+        delay initialization or implement buffer caches.
+        Such writes should be automatically validated by yet-to-be-developed
+        tools.
+  \item About half (9/17) of the observed usages are invalid, consisting of methods
+        which implemented exceptions to an object's const-ness; perhaps the developers
+        chose to add one exception rather than remove const completely. ({\bf RQ3})
+\end{itemize}
+
+\subparagraph*{Acknowledgements.}
+This work was supported in part by Canada's Natural Science and Engineering Research
+Council as well as a Google Faculty Research Award.

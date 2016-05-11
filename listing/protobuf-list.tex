@@ -1,0 +1,41 @@
+\documentclass[tikz]{standalone}
+
+\usepackage{fontspec}
+
+\usetikzlibrary{arrows}
+\usetikzlibrary{calc}
+\usetikzlibrary{decorations.pathreplacing}
+\usetikzlibrary{positioning}
+\usetikzlibrary{matrix}
+
+\usepackage{fontspec}
+
+\begin{document}
+
+\begin{tikzpicture}
+  [node distance=5mm, >=stealth',
+  every node/.style={font=\footnotesize},
+  every matrix/.style={fill=black!15, inner sep=1mm, row sep=0.5mm,
+                        matrix of nodes, nodes in empty cells,
+                        minimum height=0.5em, minimum width=.5em,
+                        nodes={anchor=base, inner sep=0, font=\ttfamily\footnotesize}}]
+
+  \matrix (snippet) {
+b & o & o & l &   & |[black!50]|l & |[black!50]|i & |[black!50]|n & |[black!50]|k & |[black!50]|e & |[black!50]|d & |[black!50]|\_ & |[black!50]|p & |[black!50]|t & |[black!50]|r & |[black!50]|\_ & |[black!50]|i & |[black!50]|n & |[black!50]|t & |[black!50]|e & |[black!50]|r & |[black!50]|n & |[black!50]|a & |[black!50]|l & |[black!50]|: & |[black!50]|: & d & e & p & a & r & t & ( & ) &   &   &   &   &   &   &   &   &   &   &   &   \\
+  &   &   &   & G & T & E & S & T & \_ & L & O & C & K & \_ & E & X & C & L & U & D & E & D & \_ & ( & g & \_ & l & i & n & k & e & d & \_ & p & t & r & \_ & m & u & t & e & x & ) &   & \{ \\
+  &   & M & u & t & e & x & L & o & c & k &   & l & o & c & k & ( & \& & g & \_ & l & i & n & k & e & d & \_ & p & t & r & \_ & m & u & t & e & x & ) & ; &   &   &   &   &   &   &   &   \\
+  &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+  &   & i & f &   & ( & |[black!50]|t & |[black!50]|h & |[black!50]|i & |[black!50]|s & |[black!50]|- & |[black!50]|> & n & e & x & t & \_ &   & = & = &   & t & h & i & s & ) &   & r & e & t & u & r & n &   & t & r & u & e & ; &   &   &   &   &   &   &   \\
+  &   & l & i & n & k & e & d & \_ & p & t & r & \_ & i & n & t & e & r & n & a & l &   & c & o & n & s & t & * &   & p &   & = &   & |[black!50]|t & |[black!50]|h & |[black!50]|i & |[black!50]|s & |[black!50]|- & |[black!50]|> & n & e & x & t & \_ & ; &   \\
+  &   & w & h & i & l & e &   & ( & p & - & > & n & e & x & t & \_ &   & ! & = &   & t & h & i & s & ) &   & p &   & = &   & p & - & > & n & e & x & t & \_ & ; &   &   &   &   &   &   \\
+  &   & p & - & > & n & e & x & t & \_ &   & = &   & |[black!50]|t & |[black!50]|h & |[black!50]|i & |[black!50]|s & |[black!50]|- & |[black!50]|> & n & e & x & t & \_ & ; &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+  &   & r & e & t & u & r & n &   & f & a & l & s & e & ; &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+\} &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+  };
+
+ \node [above, anchor=west, black!50, xshift=0.5cm]
+        at (snippet-1-46.north east)
+        {\texttt{gtest-linked\_ptr.h}};
+\end{tikzpicture}
+
+\end{document}

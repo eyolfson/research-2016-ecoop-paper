@@ -1,0 +1,31 @@
+\documentclass[tikz]{standalone}
+
+\usepackage{fontspec}
+
+\usetikzlibrary{arrows}
+\usetikzlibrary{calc}
+\usetikzlibrary{decorations.pathreplacing}
+\usetikzlibrary{positioning}
+\usetikzlibrary{matrix}
+
+\usepackage{fontspec}
+
+\begin{document}
+
+\begin{tikzpicture}
+  [node distance=5mm, >=stealth',
+  every node/.style={font=\footnotesize},
+  every matrix/.style={fill=black!15, inner sep=1mm, row sep=0.5mm,
+                        matrix of nodes, nodes in empty cells,
+                        minimum height=0.5em, minimum width=.5em,
+                        nodes={anchor=base, inner sep=0, font=\ttfamily\footnotesize}}]
+
+  \matrix (snippet) {
+v & o & i & d &   & w & r & i & t & e & T & o & A & r & g & ( & i & n & t &   & * & y & ) &   & \{ &   & * & y &   & = &   & 1 & 7 & ; &   & \} \\
+%  &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+c & o & n & s & t &   & i & n & t &   & * & x &   & = &  & |[black!50]|. & |[black!50]|. & |[black!50]|. & ; &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+w & r & i & t & e & T & o & A & r & g & ( & c & o & n & s & t & \_ & c & a & s & t & < & i & n & t &   & * & > & ( & x & ) & ) & ; &   &   &   \\
+  };
+\end{tikzpicture}
+
+\end{document}

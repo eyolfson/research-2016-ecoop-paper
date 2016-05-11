@@ -1,0 +1,133 @@
+One of our contributions is a careful analysis of the \const{} usages detected
+by our ConstSanitizer dynamic analysis tool.
+We propose a classification for \wstcqs{} along 2 axes.
+We manually assigned each write 1) a single cause, from a set of common root
+causes; and 2) a set of additional attributes. This classification distills our
+empirical observations about \const{} use in practice.
+
+\begin{table}[ht!]
+  \caption{Root causes of writes through \const{} and our symbols for these causes.}
+  \label{table:root-cause-reference}
+  \centering
+  \begin{tabular}{l c}
+    \textbf{Root Cause} & \textbf{Symbol} \\
+    \midrule
+    Write to mutable field         & M \\
+    Transitive write               & T \\
+    Write after casting a \const{} qualifier away & C \\
+  \end{tabular}
+\end{table}
+
+\noindent Table~\ref{table:root-cause-reference} lists all of the root causes
+for \wstc, along with a one-letter abbreviation that
+we will use in Section~\ref{section:results}'s tables.
+ConstSanitizer detects such writes and reports them to the user.
+The causes are:
+
+\begin{itemize}
+  \item mutable field (M): the program writes to a \texttt{mutable}-labelled
+        field of a \const{} object.
+        \begin{center}
+          \includestandalone{listing/mutable-field}
+        \end{center}
+        \texttt{mutable} permits method \texttt{mutator()} to
+        write to field \texttt{x} even though it is a \const{} method, which
+        would ordinarily prevent (at compile-time) writes to fields of the
+        \texttt{this} object.
+
+  \item transitive write (T): the program writes through a field of a \const{}
+        object.
+        \begin{center}
+          \includestandalone{listing/transitive-write}
+        \end{center}
+        \const{}-qualified method \texttt{transitiveWrite()} writes to
+        field \texttt{x} of the \texttt{this} object.
+        While the \const{} qualifier prevents mutation of the \texttt{x} field,
+        it does not prevent transitive writes of the memory pointed to by
+        \texttt{x}.
+
+  \item casting away const (C): the program writes through a pointer which has
+        previously been \const{} but whose \const{}-ness has been cast away
+        using a \code{const\_cast} or C-style cast.
+        \begin{center}
+          \includestandalone{listing/const-cast}
+        \end{center}
+        The write in \texttt{writeToArg()} mutates the value pointed-to by
+        \texttt{x} while \texttt{x} is \const{}-qualified.
+        ConstSanitizer reports \wstcqs{} whose \const{}-ness has been
+        cast away, using the \const{}-ness of the most recent
+        declared type for the value.
+\end{itemize}
+
+\vspace*{-1em}
+\begin{table}[ht!]
+  \caption{Observed common attributes of writes through \const{} and corresponding
+           symbols.}
+  \label{table:classification-reference}
+  \centering
+  \begin{tabular}{l c}
+    \textbf{Attribute} & \textbf{Symbol} \\
+    \midrule
+    Write is synchronized & S \\
+    Write is not visible  & N \\
+    Write is to a buffer/cache & B \\
+    Write is delayed initialization & D \\
+    Write is incorrect & I \\
+  \end{tabular}
+\end{table}
+
+Table~\ref{table:classification-reference} summarizes our attributes for \wstcqs.
+We assigned attributes to writes based on our understanding of the code.
+Writes may have multiple attributes; for instance, a
+write in our Protobuf benchmark is B \& N \& S.
+The attributes are:
+
+\begin{itemize}
+  \item synchronized (S): indicates that the write is always protected by a
+        lock.
+        This attribute is often required under the C++11 standard: all types
+        that are shared between threads and that may be used with the standard
+        library must be either bitwise const, which is clearly not the case when
+        we witness a write, or else protected against concurrent
+        accesses~\cite{sutter13:_gotw_solut}.
+        The following example, from Protobuf, is synchronized using Google mutex
+        primitives.
+        \begin{center}
+          \includestandalone{listing/synchronized}
+        \end{center}
+  \item not visible (N): indicates that the result of the write is never
+        externally visible (e.g. private and with no accessor methods; may be
+        accessed in the same translation unit).
+        Often occurs in the context of testing-related counters.
+        \begin{center}
+          \includestandalone{listing/not-visible}
+        \end{center}
+  \item to a buffer/cache (B): indicates that the write is of a derived value
+        which can be computed from other currently-available state.
+        Such writes are often optimizations.
+        \begin{center}
+          \includestandalone{listing/buffer}
+        \end{center}
+  \item delayed initialization (D): indicates that the write initializes state
+        not initialized in the constructor or its transitive
+        callees.
+        Writes with this attribute could have also occurred
+        in the constructor, but the written value was not yet
+        available.
+        Failure to call a delayed initialization method would lead to undesired
+        behaviours (or lack of desired behaviours).
+        \begin{center}
+          \includestandalone{listing/delayed-initialization}
+        \end{center}
+  \item incorrect (I): indicates that the write appeared to violate the
+        \const{}-ness of the object.
+\end{itemize}
+
+Note that S/N/B/D writes are not necessarily errors and do not necessarily
+violate immutability properties.
+We thus chose the word ``attribute'' to suggest that S/N/B/D indicate an
+incidental property of a \wtc.
+If the code containing the writes is properly written, an object with an
+S/N/B/D \wtc{} can still appear to be immutable to the client, assuming all
+references to that object are read-only.
+A write with attribute I, however, is a client-visible violation of \const{}.

@@ -1,0 +1,151 @@
+We continue with an example of a \const{} usage that must be accepted by C++
+compilers~\cite{programming-langauges-cpp-n3690} but leads to undefined
+behaviour when used with the C++11 standard library specification.
+
+Listing~\ref{listing-motivating-example} contains function \texttt{writeId()},
+which modifies field \texttt{id} of its parameter.
+Function \texttt{evil()} takes a \const{}-qualified parameter, casts away the
+\const{} qualifier, and calls \texttt{writeId()}.
+Both these functions must be accepted by C++ compilers.
+
+\begin{listing}[!htb]
+  \caption{Method \texttt{evil()} violates the spirit of \const{} by causing a
+           write to an externally-visible field of \const{} object
+           ``\texttt{a}''.
+           Circled numbers used for subsequent explanations.}
+  \label{listing-motivating-example}
+  \centering
+  \includestandalone{listing/motivating-example}
+\end{listing}
+
+Function \texttt{writeId()} does not perform anything unexpected.
+The write to \texttt{id} is legitimate with respect to \const{}:
+\texttt{writeId()} has a non-\const{} reference to data and is therefore
+entitled to write to it.
+(\texttt{writeId()} conflicts with a different part of the library
+specification---one oughtn't write to fields used as hashes---but that
+conflict is beyond the scope of this work.)
+
+Function \texttt{evil()} accepts a \const{} parameter ``\texttt{a}''; the
+\const{} qualifier intuitively suggests that the state of ``\texttt{a}'' should
+not change across a call to \texttt{evil()}.
+(Section~\ref{section:background} explains the C++ semantics of \const{} in more
+detail; Section~\ref{section:technique} explains the writes that ConstSanitizer
+monitors.)
+\texttt{evil()} then casts away the \const{} qualifier and calls
+\texttt{writeId()}, which writes to the \texttt{id} field, thus changing the
+state of ``\texttt{a}''.
+
+Listing~\ref{listing-motivating-example} also contains client code.
+This client code provides a \texttt{hash()} function for when objects of type
+``\texttt{A}'' are used with the standard library.
+It continues with a declaration of an \texttt{std::unordered\_map} \texttt{m},
+which gets a \const{}-qualified object ``\texttt{a}'' added to it.
+(In C++, objects like ``\texttt{a}'' and \texttt{m} are constructed upon declaration.)
+Between the \texttt{insert()} call and the \texttt{find()} call, the program
+calls \texttt{evil()}, which changes the \texttt{id} field, thus causing the
+\texttt{hash()} of ``\texttt{a}'' to change.
+As a result, the \texttt{find()} call may unexpectedly return \texttt{m.end()},
+indicating that it did not find ``\texttt{a}'' in the expected bucket; that
+result should be a surprise to the client.
+
+In our example, the client code is doing nothing wrong, yet it may get an
+unexpected result from the map.
+The client should be entitled to believe that its \const{}-qualified
+``\texttt{a}'' object does not change between the two map calls and that
+the object is still in the map.
+
+\begin{figure}[!htb]
+  \centering
+  \begin{tikzpicture}[->,>=stealth',shorten >=0.5mm,node distance=2cm]
+
+    \draw [decorate,decoration={brace,amplitude=3mm},-,xshift=0pt,yshift=0pt]
+          (-0.7,0.3) -- (8.5,0.3)node [black,midway,yshift=0.6cm]
+          {\textit{Shadow Value}};
+    \node (b1) {$b_{n+1}$};
+    \node [right of=b1] (b2) {$b_n$};
+    \node [right of=b2] (b3) {$b_{n-1}$};
+    \node [right of=b3] (b4) {...};
+    \node [right of=b4] (b5) {$b_0$};
+    \node [below of=b1, node distance=1cm] (b1t)
+          {Is \code{T} \const{}?};
+    \node [below of=b2] (b2t)
+          {Is \code{T *} \const{}?};
+    \node [below of=b3, node distance=1cm] (b3t)
+          {Is \code{T **} \const{}?};
+    \node [below of=b5, node distance=1cm] (b5t)
+          {Is \code{T $(\texttt{*})^n$} \const{}?};
+
+    \path (b1t) edge (b1)
+          (b2t) edge (b2)
+          (b3t) edge (b3)
+          (b5t) edge (b5);
+  \end{tikzpicture}
+  \caption{Our shadow values encode the \const{}-ness of each level of an $n$
+           level pointer.}
+  \label{figure:shadow-values}
+\end{figure}
+
+\subparagraph*{Analysis of example.}
+We informally describe how ConstSanitizer works on our example.
+Our LLVM-based tool actually operates at the \texttt{llvm} bitcode
+level (assisted by metadata from \texttt{clang}), but for clarity we describe
+shadow values and the effects of statements on them using C++ code.
+Section~\ref{section:technique} describes our analysis as-implemented on top of
+LLVM.
+
+ConstSanitizer associates a shadow value with each variable.
+This shadow value describes whether or not the variable, and each of its
+dereferences, may be written to; Figure~\ref{figure:shadow-values} shows how
+shadow values encode \const{}-ness.
+We present the semantics of our shadow encoding more thoroughly in
+Table~\ref{tab:shadow-value-example}.
+ConstSanitizer propagates shadow values through the program's execution.
+At each write, ConstSanitizer verifies that the shadow value permits a write,
+and indicates a \wtcq{} if not.
+
+We next show how ConstSanitizer works; circled numbers refer back to
+Listing~\ref{listing-motivating-example}.
+
+\begin{enumerate}[label=\protect\circled{\arabic*}]
+  \item Program allocates \const{}-qualified new object ``\texttt{a}''.
+        Using debug information, ConstSanitizer finds the \const{} qualifier in
+        ``\texttt{a}''{}'s type, and associates shadow value $(1)_2$ with
+        ``\texttt{a}'', indicating that ``\texttt{a}'' is \const{}.
+  \item ConstSanitizer then propagates shadow value $(1)_2$ to the function call
+        \texttt{evil()}.
+        Inside function \texttt{evil()}, variable ``\texttt{a}'' is a reference,
+        so we shift the shadow value to the left and obtain $(10)_2$ inside the
+        function call boundary.
+  \item Program casts from type \texttt{const A*} to type \texttt{A*}.
+        Because ``\texttt{a}'' is a reference inside \texttt{evil()}, the
+        address-of operation has no effect on the shadow value.
+        (On a non-reference, taking the address would also result in a logical
+        shift left of the shadow value.)
+
+        The cast of the \const{} qualifier is invisible to LLVM, so
+        ConstSanitizer propagates shadow value $(10)_2$ across the cast.
+        (Had ``\texttt{a}'' originally not been \const{}, a pointer to it would
+        have shadow value $(00)_2$ and it would have shadow value $(0)_2$.)
+
+        Finally, ConstSanitizer passes shadow value $(10)_2$ for parameter
+        ``\texttt{pa}'' of \texttt{writeId()}.
+  \item Inside function \texttt{writeId()}, the instrumented write to field
+        ``\texttt{id}'' observes that the shadow value of the address of the
+        containing object is $(10)_2$.
+        Because the left-hand side uses the \verb+->+ operator, ConstSanitizer
+        shifts the shadow value back right once, giving shadow value $(1)_2$ for
+        the containing object.
+        Because the containing object is \const{}, we also apply a shadow value
+        of $(1)_2$ to all writes to fields of that object.
+
+        When executing the write, ConstSanitizer checks the right-most bit of
+        the shadow value for the destination.
+        Since this value is $(1)_2$, the program is writing a value through a
+        \const{} reference.
+        ConstSanitizer therefore signals a \wtc{}.
+\end{enumerate}
+
+\noindent Section~\ref{section:classification} contains our classification of \wstc{}.
+We classify this write as root cause ``C'', a write after casting
+away a \const{}, and assign attribute ``I'', for incorrect.

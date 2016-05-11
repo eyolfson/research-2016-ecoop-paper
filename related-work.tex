@@ -1,0 +1,131 @@
+We discuss a number of areas of related work: immutability (and related
+approaches) for Java; purity analyses; and dynamic analyses that inspired our
+approach.
+The Java programming language has no exact analog to C++'s
+\const{} operator.
+Related work defined immutability annotations for Java and statically and
+dynamically verified that programs satisfy their annotations.
+Potanin et al~\cite{lncs-2013-7850-potanin} provide a recent discussion of
+immutability terminology and compare research implementations in depth.
+(Our implementation has at its core a dynamic analysis verifying that C++ programs
+satisfy a strengthened version of their \const{} annotations.)
+A different stream of related work verifies whether (Java) methods are pure,
+i.e. have no visible side-effects; there is a strong connection between purity
+and immutability.
+
+\subparagraph*{\const{} for Java, and similar projects.}
+
+Javari~\cite{meng-tschantz, oopsla-2005-p211-tschantz} allows its users to
+specify read-only references in Java programs.
+It aims to ensure that a \texttt{readonly} (effectively, deeply-immutable
+\const{}) typed object does not mutate its state or any state transitively
+reachable through its references.
+Javari, like C++, includes a \texttt{mutable} keyword, which allows developers
+to specify that a field may be modified regardless of \texttt{readonly}
+qualifiers.
+Javari also inserts dynamic checks to verify that downcasts maintain the
+immutability qualifier of the type.
+Essentially, Javari provides a safer version of C++'s \const{} that, due to the
+nature of Java, maintains deep immutability unless the developer explicitly opts
+out of the checks.
+
+Our work provides similar guarantees to those provided by Javari.
+Since Javari does not have an underlying C++ \const{} specification to build on
+top of, it has to implement all of those checks itself.
+In terms of what we check, our work matches Javari in terms of transitivity and
+downcasts.
+Our work also reports writes to mutable fields at runtime.
+
+Unlike Javari, we could investigate the behaviour of a set of real-world
+benchmark programs, developed against the C++ \const{} semantics (and which, by
+necessity, satisfy those semantics).
+Our empirical study therefore points out the difference in practice between
+\const{} semantics as they exist---shallow immutability, mutable, and
+\const{} casting; and a stronger version of these semantics---deep
+immutability, no mutable, and no const casting.
+
+A related concept to \const{} is that of stationary fields, as proposed by Unkel
+and Lam~\cite{popl-2008-p183-unkel}.
+A stationary field is similar to a Java \texttt{final} field.
+A Java \texttt{final} field can only be written to in a constructor.
+By contrast, a stationary field is only written to before it is read.
+In essence, a stationary field acts like a \texttt{final} field but with fewer
+restrictions on where initialization may occur.
+Nelson et al~\cite{NelsonPearceNoble12ProfilingFieldInitialisationJava}
+performed a follow-up study using a dynamic analysis which determined that
+72--82\% of fields in Java programs are stationary.
+Their work, like ours, empirically explores how programs use (or could use, in
+their case) language features.
+
+\subparagraph*{Purity analyses.}
+
+A pure method does not modify any state accessible before the
+method was called.
+Pure methods may create and modify objects to return to the caller.
+A function which writes to no global state and has all arguments transitively
+\const{} is pure.
+
+%% JPure~\cite{cc-2011-p104-pearce} is a purity analysis for Java that leverages
+%% method annotations to mark methods as pure.
+%% A modular verification approach on the annotations enables their analysis to
+%% scale; JPure uses an intra-procedural analysis.
+%% If a method has a pure annotation they ensure that it does not write to any
+%% fields, call any methods not marked as pure, or override a method that is not
+%% also marked as pure.
+%% Fresh values (newly declared) and fields that act as local variables (only
+%% accessed in a certain method) are also allowed.
+%% They found that over 40\% of methods could be marked as pure for the Java
+%% standard library.
+
+ReIm and its corresponding type inference system,
+ReImInfer~\cite{oopsla-2012-p879-huang}, is similar to Javari, except that its
+type system is context sensitive.
+ReIm %does not provide a way to exclude (mutable) fields from being considered for immutability and 
+was designed to find method purity.
+Its type system allows the immutability of the
+return type to match that of the calling reference.
+This allows methods to be reused without requiring mutable and
+read-only versions.
+ReImInfer is a type inference system that maximizes the amount of methods
+marked as \texttt{readonly}.
+They report that 41--69\% of methods can be marked as \texttt{readonly}.
+
+Other systems also verify method purity.
+JPPA is a combined pointer and escape analysis for
+Java~\cite{vmcai-2005-p199-salcianu, phd-2006-salcianu}.
+S\unichar{259}lcianu and Rinard found over half the methods they analyzed were pure.
+Rytz et al~\cite{ftfjp-2013-rytz} instead use a simpler flow-insensitive
+analysis and find similar results.
+
+Artzi et al proposed a combined dynamic and static analysis for
+mutability~\cite{ase-2007-p104-artzi}.
+Their analysis determines the mutability of method parameters.
+The goal of that work was to scale better and produce more precise results than
+static analysis alone.
+
+\subparagraph*{\const{}-correctness through abstract machines.}
+
+Chisnall et al~\cite{asplos-2015-chisnall-p117} propose a memory-safe abstract
+machine for C which can be used to verify that immutable objects
+(declared with \const{}) are never mutated through non-\const{} aliases.
+This resembles our approach of using shadow values to track the declared
+\const{}-ness of an object.
+(They do not investigate transitive immutability.)
+Our study, by contrast, focuses solely on \wstc.
+All of their subject programs removed a \const{} qualifier at
+some point.
+It was beyond the scope of their work to investigate how and why their subject programs
+removed the \const{} qualifier.
+
+\subparagraph*{Other dynamic analyses.}
+
+Our dynamic analysis approach is similar to approaches used in
+Umbra~\cite{2010-cc-zhao} and Dr.~Memory~\cite{2011-cgo-bruening}.
+Like Umbra and Dr.~Memory, we use shadow values to detect interesting
+program behaviours.
+However, ConstSanitizer builds directly on LLVM and does not use a
+dynamic instrumentation platform.
+Furthermore, the properties that we verify are novel \const{}-related
+properties, compared to Dr.~Memory, which looks for memory errors such
+as accesses to unallocated space, and Umbra, which helps developers understand
+threads' memory access patterns and implements almost-free custom watchpoints.

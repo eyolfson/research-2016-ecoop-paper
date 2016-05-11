@@ -1,0 +1,447 @@
+Our ConstSanitizer tool generates instrumented code which, when executed,
+prints out notifications about \wstcqs
+\footnote{We previously implemented a static analysis which was an unpublishable
+          dead end. Most of its reported violations required calling context to
+          make sense of; context-sensitive interprocedural analysis would thus
+          be required to get meaningful results.
+          Static counts of mutables and const casts were too overwhelming.
+          Furthermore, imprecision due to pointers made its results unusable.}.
+ConstSanitizer builds upon LLVM~\cite{llvm} and was inspired by existing
+sanitizers including AddressSanitizer~\cite{2012-usenix-serebryany} and
+MemorySanitizer~\cite{2015-cgo-stepanov}.
+
+We implemented ConstSanitizer by extending the \texttt{clang} frontend and
+adding instrumentation passes on \texttt{llvm} bitcode.
+The instrumented code calls hooks in our modified version of \texttt{llvm}'s
+\texttt{compiler-rt} runtime library.
+Figure~\ref{figure:overview-src-to-obj} depicts our processes for compiling
+instrumented code.
+Plain text indicates inputs and outputs; outlined boxes indicate existing
+software components; and light gray boxes indicate our modifications.
+
+We first describe our modifications to the \texttt{clang} frontend.
+When the developer enables ConstSanitizer (using a command-line flag), our
+frontend adds metadata about initialization expression extents to the bitcode.
+This metadata notifies the \texttt{llvm}-level instrumentation about
+source-level constructs that would otherwise be lost in translation to bitcode.
+
+Specifically, we modified \texttt{clang}'s bitcode generator at variable
+declaration statements.
+At statements of the form \code{type var = expr} we mark the instructions
+making up \code{expr} so that our \texttt{llvm}-level
+instrumentation can ignore them.
+The rationale for ignoring those writes is that the primary user-visible write
+from a \texttt{clang} declaration statement is to \code{var}, on the
+left-hand side.
+We empirically observed that other writes within \code{expr} are almost always
+initialization writes to \code{var}, which ought
+not to be reported even if \code{var} is \const{}.
+Although a programmer may include explicit (side-effecting) writes within
+\code{expr}, we ignore such writes to eliminate the false positives
+that otherwise occur due to initialization writes.
+
+\begin{figure}
+  \centering
+  \begin{tikzpicture}[->,>=stealth',shorten >=0.5mm,node distance=3cm]
+    \node (src) {Source File(s)};
+    \node (clang) [xshift=1.5cm, yshift=-0.5cm, draw, node distance=1cm,
+                   below of=src]
+          {\texttt{clang}};
+    \node (flag) [fill=black!15, text width=2.5cm, text centered,
+                  right of=src]
+          {sanitizer flag};
+    \node (clang-mod) [fill=black!15, text centered, text width=3cm,
+                       right of=clang]
+          {add metadata for expression extents};
+    \node (llvm) [rectangle, draw, right of=clang-mod] {\texttt{llvm}};
+    \node (llvm-mod) [fill=black!15, text centered, text width=3cm,
+                      right of=llvm]
+          {instrument LLVM bitcode to track \const{} and check stores};
+    \node (obj) [node distance=1.8cm, below of=llvm-mod] {Object File(s)};
+
+    \path (src) edge (clang)
+          (flag) edge (clang)
+          (clang) edge (clang-mod)
+          (clang-mod) edge (llvm)
+          (llvm) edge (llvm-mod)
+          (llvm-mod) edge (obj);
+    \node (clang2) [xshift=-1.5cm, yshift=-0.5cm, draw, node distance=1cm,
+                   below of=obj]
+          {\texttt{clang}};
+    \node (flag) [fill=black!15, text width=2.5cm, text centered,
+                  left of=obj]
+          {sanitizer flag};
+    \node (clang-mod) [yshift=1.5cm, fill=black!15, text centered,
+                       text width=3cm, below of=clang2]
+          {link with modified runtime library};
+    \node (compiler-rt-mod) [xshift=-1.5cm,fill=black!15, text centered,
+                             text width=5cm, node distance=3.7cm,
+                             left of=clang-mod]
+          {includes code to report \wstc{} at runtime};
+    \node (compiler-rt) [rectangle, draw, node distance=1.5cm,
+                         above of=compiler-rt-mod]
+          {\texttt{compiler-rt}};
+    \node (exe) [xshift=-1.5cm, node distance=1.5cm, below of=clang-mod]
+          {Executable};
+
+    \path (obj) edge (clang2)
+          (flag) edge (clang2)
+          (clang2) edge (clang-mod)
+          (clang-mod) edge (exe)
+    (compiler-rt) edge (compiler-rt-mod)
+    (exe) edge (compiler-rt-mod);
+  \end{tikzpicture}
+  \caption{ConstSanitizer generates instrumented LLVM bitcode which reports
+           writes through \const{} qualifiers at runtime.}
+  \label{figure:overview-src-to-obj}
+\end{figure}
+
+We use \const{}-ness information as provided by declarations,
+rather than implementing a taint-based approach.
+Listing~\ref{listing-false-negative-example} shows a false negative caused by
+our approach.
+The debugging information for \texttt{y} gives shadow value
+$(\texttt{00})_2$.
+Hence, on the write through \texttt{y}, we do not report a \wtc{},
+because we do not propagate \const{}-ness information from variable
+initializers.
+One might expect this write to trigger a report since \texttt{y} aliases
+the read-only reference \texttt{x}.
+(We report a write if the cast is part of a function argument.)
+
+\begin{listing}[ht]
+  \caption{C++ source code showing a false negative due to expression handling.}
+  \label{listing-false-negative-example}
+  \centering
+  \includestandalone{listing/false-negative-example}
+\end{listing}
+
+Most of our instrumentation lives in a custom \texttt{llvm} pass that
+generates code to track \const{}-ness of the program's values.
+The instrumentation manipulates shadow values to track \const{} qualifiers at
+every instruction that generates a pointer value.
+The \const{} information relies on type tables from DWARF 4 debugging
+information.
+In \texttt{llvm}, this includes all variables in functions---all local
+variables are allocated on the stack and are pointers.
+
+Our dynamic analysis returns (as one might expect) no false positives, since it
+observes program executions.
+However, it depends on the accuracy of the debugging information and
+metadata, which it uses to identify which variables are \const{}-qualified in
+the source and to identify initialization expression extents.
+We ran into one false positive in our results which we believe is the result of
+the metadata being invalidated between LLVM passes.
+Throughout the remainder of the section, we point out a couple of cases where
+our analysis must approximate intended \const{}-ness because actual
+\const{}-ness information does not exist.
+
+\begin{table}[!b]
+  \caption{Shadow values encode available \const{}-ness restrictions on
+           variables.}
+  \label{tab:shadow-value-example}
+  \centering
+  \begin{tabular}{@{}lrlr@{}} % \toprule
+    \renewcommand{\arraystretch}{1.2}
+    \textbf{Declaration} & \textbf{Shadow value} & \textbf{Example statement}
+    & \textbf{Allowed} \\ \midrule
+    \code{int x} & $(0)_2$ & \code{x = 5} & $\checkmark$ \\
+    \arrayrulecolor{black!10} \hline
+    \code{\const{} int x} & $(1)_2$ & \code{x = 5} & $\times$ \\
+    \arrayrulecolor{black!30} \hline
+
+    \code{int * x}  & $(00)_2$ & \code{x = y} & $\checkmark$ \\
+    && \code{*x = 55} & $\checkmark$ \\ \arrayrulecolor{black!10} \hline
+
+    \code{int *\const{} x} & $(01)_2$ & \code{x = y} & $\times$ \\
+    && \code{*x = 55} & $\checkmark$ \\ \hline
+
+    \code{\const{} int * x} & $(10)_2$ & \code{x = y} & $\checkmark$ \\
+    (or \code{int \const{} * x}) && \code{*x = 55} & $\times$ \\ \hline
+
+    \code{\const{} int *\const{}} & $(11)_2$ & \code{x = y} & $\times$ \\
+    (or \code{int \const{}  *\const{}}) && \code{*x = 55} & $\times$  \\
+    \arrayrulecolor{black}
+  \end{tabular}
+\end{table}
+
+\subparagraph*{Structure of shadow values.}
+
+A shadow value consists of $n$ bits tracking \const{}-ness (where $n$ is the word length of
+the processor architecture).
+Each bit represents whether a pointer or pointee has a \const{}
+qualifier or not.
+The rightmost bit represents the \const{} qualifier of the value itself.
+Bits to the left (if the value is a pointer) represent what the pointer
+transitively points to.
+Our encoding supports pointers up to $n-1$ levels deep on $n$-bit processors
+(64 for our experiments).
+Figure~\ref{figure:shadow-values} depicted our encoding of shadow values, while
+Table~\ref{tab:shadow-value-example} shows how shadow values represent
+sample \const{}-ness settings and corresponding writes allowed.
+
+\subparagraph*{Shadow value computation.}
+
+We next describe how we create and propagate shadow values.
+Our ConstSanitizer instrumentation dynamically propagates shadow values
+representing \const{} qualifiers through a program's instructions.
+Our goal is to monitor 1) writes to \texttt{mutable} fields; 2) locations where
+\const{} has been cast away; and 3) transitive writes, to pointees of fields,
+through \const{} references.
+Table~\ref{tab:technique-summary} summarizes the analysis rules.
+
+\begin{table}[!b]
+  \caption{Dynamic analysis rules showing computation of shadow value for result
+           \texttt{\%1}.}
+  \label{tab:technique-summary}
+  \centering
+    \small
+  \begin{tabular}{l p{8cm}}
+    \textbf{Instruction} & \textbf{New shadow value} \\
+    \midrule
+    \texttt{\%1 = alloca ...} &
+      from \const{} qualifiers in debugging
+      information, consistent with Figure~\ref{figure:shadow-values}.
+      \\[0.5em]
+    \texttt{\%1 = getelementptr \%2} &
+      by logically shifting left \texttt{\%2}'s shadow value once for each
+      dereference this instruction represents.
+
+      \textbf{if field access}: check \const{} qualifier of base object; for
+      (immutable) \const{} base objects, new shadow value is all ones, otherwise all zeros.
+      \\[0.5em]
+    \texttt{\%1 = call(\%2)} &
+      loaded from return shadow value in Thread-Local Storage (TLS).
+
+      \textbf{for pointer arguments \texttt{\%2}:} also write shadow values to
+      appropriate TLS slots for the function call; if the call and argument are
+      marked as ignored, write all zeros for the shadow value for the argument.
+      \\[0.5em]
+    \texttt{\%1 = phi}/\texttt{select} \texttt{...} &
+      carry out same operation on shadow value operands.
+      \\[0.5em]
+    \texttt{\%1 = bitcast \%2} &
+      from the shadow value for \texttt{\%2}, if compatible; \\ & otherwise all
+      zeros.
+      \\[0.5em]
+    \texttt{\%1 = load \%2} &
+      logical shift right of \texttt{\%2}'s shadow value.
+      \\[0.5em]
+    \texttt{store \%2, \%1} &
+      check rightmost bit of shadow value for \texttt{\%1}, report \wtc{} if
+      set. (Only applies if the instruction not ignored as an initializer.)
+
+      \textbf{if \texttt{\%2} is function argument:} load shadow value for
+      \texttt{\%2} from TLS, left shifted once. New shadow value is bitwise OR
+      of shifted value with previously computed shadow value for \texttt{\%1}.
+
+      \textbf{if \texttt{\%2} is ``this'' function argument:} same steps as
+      above, except skip the bitwise OR step.
+
+      \textbf{if \texttt{\%2} is ``this'' function argument for destructor:} shadow
+      value for \texttt{\%1} is $(00)_2$.
+      \\[0.5em]
+    \texttt{\%1 = extractelement}
+       &
+       all zeros.\\
+    \texttt{\%1 = extractvalue}\\
+    \texttt{\%1 = inttoptr} \\
+    \texttt{\%1 = landingpad}
+      \newline
+      \\
+  \end{tabular}
+\end{table}
+
+\texttt{llvm} bitcode uses \texttt{alloca} instructions to introduce new pointer
+values.
+Our \texttt{llvm} pass instruments each \texttt{alloca} instruction with the
+appropriate shadow value, as extracted from the type information in the source
+code, using standard \texttt{clang} debug information.
+
+Ultimately, our instrumentation verifies the behaviour of \texttt{store}
+instructions.
+Recall that we exclude \texttt{store} instructions that come from the right-hand
+side of a declaration statement.
+For all other \texttt{store}s, we check whether the operand---the location being
+written-to---represents a \const{}-qualified type.
+The rightmost bit of the shadow value provides this information.
+If that bit is 1, an execution of this \texttt{store} instruction is a write to
+a \const{}-qualified location.
+We insert a call to our runtime library to check the value of the bit and to
+report a \wtc{} if the bit is 1.
+(We later discuss a special case for store instructions where the value being
+stored is a function argument.)
+
+Conversely, \texttt{load} instructions return a pointer that represents a single
+pointer dereference.
+To compute the returned shadow value, we right shift the operand's shadow value.
+
+\texttt{llvm}'s \texttt{getelementptr} (GEP) instruction accesses arrays and
+fields of objects.
+This instruction preserves type safety through dereferences in the compilation
+process and is a safe alternative to directly generating pointer arithmetic
+code.
+Our instrumentation performs a logical shift right by one bit for every pointer
+dereference implied in the GEP instruction.
+Our treatment of GEP implicitly handles transitive immutability as follows: when
+a GEP accesses an object field, and the containing object is \const{}-qualified,
+we generate a shadow value as if the field had a \const{} qualifer on every type
+for the contained field.
+This treatment implies checks for transitive immutability; generating a
+non-\const{} shadow value here would generate the same bitwise immutability
+checks for \const{} as specified by the C++ standard.
+
+Our instrumentation propagates \const{}-ness information (in
+shadow values) alongside references to that location.
+In C++, access restrictions to a location depend on whether the
+program is accessing that location through a \const{} reference or not.
+Therefore, in the presence of casts and pointer arithmetic, there is no ground
+truth about the \const{}-ness of the resulting references and we must make a
+reasonable under-approximation as to \const{}-ness.
+
+We next discuss casting-related \texttt{llvm} instructions.
+The \texttt{bitcast} instruction converts a value into a specified type.
+If a program converts a pointer between equally-indirected pointer types, then
+we copy the old shadow value to the result.
+(C++ \const{}-casts do not appear at LLVM bitcode level, nor
+do the component of a C-style cast that manipulates \const{}-ness.
+ConstSanitizer preserves declared \const{}-ness for such variables.)
+Otherwise, we choose to assume that the instruction's result has no \const{}
+qualifiers.
+We make this assumption in all cases for the \texttt{inttoptr} instruction,
+which represents pointer arithmetic not handled by the GEP instruction, as well
+as for \texttt{extractvalue} and \texttt{extractelement}.
+
+Our instrumentation stores shadow values for function calls' arguments and
+return values using thread local storage (TLS).
+In the straightforward case, we store shadow values for pointer arguments in
+TLS slots reserved for each argument.
+However, we ignore pointer arguments' \const{} qualifiers if the call and the
+argument are both part of a variable declaration.
+As for (pointer) return values: if a function was instrumented by our tool, then
+we read the shadow value from the appropriate TLS slot.
+We also store a mutable shadow value in the return value TLS slot, in case the
+function had not been instrumented by our tool.
+Our instrumentation either reads the approximation or, if applicable, the actual
+return value generated by the called function.
+In the presence of callbacks from uninstrumented code back to instrumented code,
+our instrumentation may use stale shadow values and report extraneous results
+based on these stale shadow values.
+
+We have a special case for store instructions where the value stored is a
+function argument, as mentioned above.
+Consider a store instruction ``\texttt{store value, location}''.
+We compute the shadow value for ``\texttt{location}'' as follows.
+First, we get the shadow value for ``\texttt{value}'' from the TLS.
+Then, we adjust this shadow value to be compatible with the type of
+``\texttt{location}'': our encoding requires one logical shift to match the type
+of ``\texttt{value}'' to that of ``\texttt{location}''.
+We bitwise OR the shadow value for ``\texttt{location}'' previously computed
+(from an \texttt{alloca} instruction) with the shifted value to get the new
+shadow value for ``\texttt{location}''.
+This preserves \const{} qualifiers of the original argument and of the local
+variables in the function.
+
+There are two further special sub-cases for store instructions and function
+arguments for (i) method and (ii) destructor calls.
+Listing~\ref{listing-llvm-example} illustrates sub-case (i).
+Here, \texttt{foo()} is declared \const{}.
+The compiler will hence treat \texttt{this} as \const{} within \texttt{foo()}.
+However, for our dynamic analysis, we want to detect writes based on the
+\const{}-ness of \texttt{this} from the caller; in method \texttt{bar()} in
+Listing~\ref{listing-llvm-example}, receiver object \texttt{nc} for
+\texttt{foo} is not \const{}, so we do not want to report the call's (transitive) store
+to \texttt{x}.
+\texttt{foo}'s method arguments appear as ``\texttt{value}'' operands of
+\texttt{store} instructions while the ``\texttt{location}'' is an
+\texttt{alloca} within the function.
+We set the shadow value of the associated \texttt{alloca} instruction to the
+value of the argument after applying a logical shift left by one (since it's a
+pointer).
+This treatment properly ignores \const{} qualifiers added due to callee
+method signatures.
+
+For sub-case (ii), destructors, we do not want to report any writes through
+\texttt{this} as the object no longer exists after the call (so that writes to
+the object aren't visible in any case).
+We handle this case by simply assuming that the \texttt{this} argument is
+mutable.
+For all other arguments, we do a bitwise OR between the \texttt{alloca} shadow
+value and the argument shadow value logically shifted left by one, which
+maintains all \const{} qualifiers.
+
+\begin{listing}[ht]
+  \caption{C++ source code showing calls to method \texttt{foo()} (with
+           its definition and associated LLVM bitcode) from \const{} context
+           \texttt{cc} and non-\const{} context \texttt{nc}.}
+  \label{listing-llvm-example}
+  \centering
+  \includestandalone{listing/llvm-example}
+\end{listing}
+
+\subparagraph*{Shadow value computation example.}
+
+Listing~\ref{listing-llvm-example} presents the C++ source code for
+\code{C::foo}, a \const{} qualified method, and the associated LLVM bitcode.
+Consider the \code{bar} function, which calls \code{foo} twice, first with
+mutable (i.e. non-\const{}) receiver object \texttt{nc} and then with \const{}
+receiver object \texttt{cc}.
+Within \code{bar}, the shadow value of \texttt{nc} is $(0)_2$ and the shadow
+value of \texttt{cc} is $(1)_2$.
+Our instrumentation assigns shadow values for each LLVM instruction with a
+pointer result. We instrument \code{C::foo} as follows:
+
+\begin{itemize}
+  \item The first instruction, \texttt{alloca}, stores its result in
+        \texttt{\%1}.
+        Since it is an \texttt{alloca} instruction, we obtain its shadow value
+        from \texttt{clang} debugging information.
+        The associated shadow value is $(10)_2$: in this \const{}-qualified
+        method, the type of \code{this} is that of a \const{} pointer to the
+        containing class, \code{\const{} C *}.
+  \item At the \texttt{store} instruction, without special handling, we would
+        load the shadow value of argument \texttt{\%this} from the TLS;
+        logically shift left the shadow value by one to account for the fact
+        that we are performing a \texttt{store} to memory allocated for that
+        argument; and bitwise OR the resulting shadow value with the original
+        shadow value for \texttt{\%1}.
+        In our example, whether the receiver object is \texttt{cc} or
+        \texttt{nc}, the shadow value for \texttt{\%1} is $(10)_2$.
+  \item Next, we obtain the shadow value for the result of the \texttt{load},
+        \texttt{\%2}.
+        As \texttt{\%2} returns a pointer, we shift \texttt{\%1}'s (the
+        operand's) shadow value right by one, giving a shadow value of $(1)_2$.
+  \item Next, the \texttt{getelementptr} instruction results in a pointer to the
+        class's \texttt{x} field.
+        Our instrumentation of \texttt{getelementptr} could produce two
+        different shadow values, depending on the instruction's operand.
+        In this case, \texttt{\%2} is a \const{} object, and the resulting
+        shadow value for a fully \const{}-qualified \texttt{x} field is
+        $(11)_2$.
+  \item Next, we obtain the shadow value for the \texttt{load} result
+        \texttt{\%4} using the same technique as for \texttt{\%2}.
+        The resulting shadow value is $(1)_2$.
+  \item Finally, we insert a check at the \texttt{store} instruction.
+        In this case, the least significant bit of the shadow value associated
+        with location (\texttt{\%4}) is 1.
+        Therefore we would dynamically report a \wtc{} at the write to field
+        \texttt{x} of the \const{} method.
+\end{itemize}
+
+For methods, this instrumentation is not enough.
+We only want to report a \wtc{} for the call with \const{} receiver object even
+though both objects call the same static method.
+Before the call to \code{foo}, our instrumentation stores the shadow value of
+the receiver object in its TLS slot.
+Our instrumentation of \code{foo} looks for \texttt{store} instructions that use
+the receiver object and recomputes the shadow value of the location.
+Here, we load the shadow value from its TLS slot and shift left
+to match the type of the expected shadow value of \texttt{\%1}.
+For \texttt{nc}'s call, this shadow value is $(00)_2$.
+Since \code{foo} is a method, we ignore the original shadow value of
+\texttt{\%1} ($(10)_2$) and overwrite it with new shadow value
+$(00)_2$.
+Following the remaining steps in \code{foo} as above, the shadow value of
+\texttt{\%4} is now $(0)_2$ and we do not report a \wtc{}.
+In the \texttt{cc} case, we would follow the same steps, but instead report a
+\wtc{}, because the shadow value would be $(10)_2$.

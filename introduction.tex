@@ -1,0 +1,107 @@
+Immutability is an important concept that simplifies reasoning about programs
+and eases software maintenance.
+Most importantly, immutability circumscribes possible side effects, 
+so that (in some cases) a user of a function may avoid closely
+examining the implementation of the function and its callees.
+One concrete application of immutability is: if a developer knows that a library
+function does not modify one of its arguments (including transitive arguments),
+then they know that it is safe to call that library function with that argument
+from multiple threads, as the function only requires read access to its
+argument.
+
+C++~\cite{programming-langauges-cpp-n3690} is a popular language that allows
+programers to specify immutability using \const{}\footnote{Some of our
+discussion also applies to C, but we focus
+on C++ in this paper.}.
+C++ experts such as Meyers recommend judicious use of
+``\const{}-correctness''~\cite{effective-cpp} in C++ codebases.
+It is generally clear when developers could use \const{}, but not (in
+non-obvious cases) when they should use \const{}.
+
+We distinguish between two uses of C++'s \const{} qualifier:
+\const{}-qualified global/stack objects, whose data may never change (i.e.
+immutable objects), and \const{}-qualified references/pointers to objects (i.e.
+read-only references~\cite{lncs-2013-7850-potanin}).
+(For now, assume that there are no casts that remove \const{} qualifiers and no
+\texttt{mutable} storage class specifiers; these language features violate
+immutability.)
+An \emph{immutable object}'s fields may never change, and mutable references to
+that object may never be created.
+A \emph{read-only reference}, on the other hand, only guarantees immutability
+for accesses through qualified references.
+An object with a read-only reference to it may still be mutated through other,
+mutable, references.
+C++ enforces a shallow immutability guarantee (also known as bitwise \const{})
+for writes through the read-only reference: while it is illegal to reassign the
+fields of such an object, any referents of fields may change.
+We expand on this in
+Section~\ref{section:background}.
+
+C++'s type system admits several workarounds to \const{}'s supposed
+immutability guarantees.
+Much research defines type qualifiers similar to C++ \const{}, but with stronger
+guarantees.
+These type systems do not have any holes in the type system, such as
+unsafe casts.
+Furthermore, they not only ensure that the field values do not change, but also ensure
+that objects referenced through fields also do not change (i.e. deep, or
+transitive, immutability; again, see Section~\ref{section:background} for more
+details).
+
+On the other hand, our industrial contacts have indicated that, in their
+codebases, \const{} has been used to deter new developers from modifying certain
+variables.
+Such variables may be modified by an experienced developer ready to assume the
+consequences~\cite{fang:_person}.
+In such cases, \const{} serves an advisory role, but does not provide any
+guarantees.
+
+Our goal is to explore the space of possible meanings for immutability
+declarations in C++ and to examine what guarantees developers appear to be
+expecting in practice.
+We developed a tool, ConstSanitizer, that instruments programs to identify
+source locations that modify \const{}-qualified objects, using more restrictive
+semantics than guaranteed by C++.
+ConstSanitizer monitors \wstc{}, i.e. writes performed on
+\const{}-qualified objects or references, either transitively (which is allowed
+in C++), or through C++'s \const{} escape hatches.
+To better understand \const{} usage in practice, we ran ConstSanitizer on a
+benchmark suite and manually classified all \wstc{}.
+
+Specifically, the goal of this work is to answer the following research
+questions:
+\vspace*{-0.25em}
+\begin{enumerate}
+  \item[({\bf RQ1})] Do developers perform shallow and transitive \wstc{}? \\[0.2em]
+        \hspace*{1em}
+        \begin{minipage}{4.5in} (Answer: Yes to both.) \end{minipage}~\\[-1em]
+
+  \item[({\bf RQ2})] How do developers \wtc{}? \\[0.2em]
+        \hspace*{1em}
+        \begin{minipage}{4.5in}
+          (Answer: By directly writing to fields of \const{}-qualified objects
+          and through transitive writes; both are about equally common.)
+        \end{minipage}~\\[-0.5em]
+  \item[({\bf RQ3})] Why do developers write to fields of \const{}-qualified objects?
+        \\[0.2em]
+        \hspace*{1em}
+        \begin{minipage}{4.5in}
+          (Answer: Buffers and delayed initialization were important reasons,
+          but over half the time, we couldn't find any clear reason motivating
+          developers' decisions to write through \const{}.)
+        \end{minipage}~\\[-0.5em]
+\end{enumerate}
+
+Section~\ref{section:conclusion} presents our detailed answers to these questions.
+
+\vspace*{1em}
+Our contributions include:
+\vspace*{-0.25em}
+\begin{itemize}
+  \item the design and implementation of a novel dynamic analysis for C++ that
+        detects \wstcqd{} variables (both shallow and transitive);
+  \item an empirical study of \const{} usage (including \wstcqs{}) on a suite of
+        7 C++ benchmarks; and,
+  \item based on the empirical study, a novel classification of \wstcqs{} in the
+        wild according to a root cause and a set of attributes.
+\end{itemize}

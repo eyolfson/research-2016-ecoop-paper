@@ -1,0 +1,46 @@
+\documentclass[tikz]{standalone}
+
+\usepackage{fontspec}
+
+\usetikzlibrary{arrows}
+\usetikzlibrary{calc}
+\usetikzlibrary{decorations.pathreplacing}
+\usetikzlibrary{positioning}
+\usetikzlibrary{matrix}
+
+\usepackage{fontspec}
+
+\begin{document}
+
+\begin{tikzpicture}
+  [node distance=5mm, >=stealth',
+  every node/.style={font=\footnotesize},
+  every matrix/.style={fill=black!15, inner sep=1mm, row sep=0.5mm,
+                        matrix of nodes, nodes in empty cells,
+                        minimum height=0.5em, minimum width=.5em,
+                        nodes={anchor=base, inner sep=0, font=\ttfamily\footnotesize}}]
+
+  \matrix (wgetopt) {
+|[black!50]|. & |[black!50]|. & |[black!50]|. &   & \_ & w & g & e & t & o & p & t & \_ & i & n & t & e & r & n & a & l & ( & |[black!50]|. & |[black!50]|. & |[black!50]|. & , &   & w & c & h & a & r & \_ & t &   & * & c & o & n & s & t &   & * & a & r & g & v & , &   & |[black!50]|. & |[black!50]|. & |[black!50]|. & ) &   & \{ \\
+  &   & e & x & c & h & a & n & g & e & ( & ( & w & c & h & a & r & \_ & t &   & * & * & ) &   & a & r & g & v & ) & ; &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+\} &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+  };
+
+  \matrix [below=of wgetopt.south west, anchor=north west] (exchange) {
+|[black!50]|. & |[black!50]|. & |[black!50]|. &   & e & x & c & h & a & n & g & e & ( & w & c & h & a & r & \_ & t &   & * & * & a & r & g & v & ) &   & \{ &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+  &   &   &   & a & r & g & v & \lbrack & b & o & t & t & o & m &   & + &   & i & \rbrack &   & = &   & a & r & g & v & \lbrack & t & o & p &   & - &   & ( & m & i & d & d & l & e &   & - &   & b & o & t & t & o & m & ) &   & + &   & i & \rbrack & ; \\
+  &   &   &   & a & r & g & v & \lbrack & t & o & p &   & - &   & ( & m & i & d & d & l & e &   & - &   & b & o & t & t & o & m & ) &   & + &   & i & \rbrack &   & = &   & t & e & m & ; &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+  &   &   &   & a & r & g & v & \lbrack & b & o & t & t & o & m &   & + &   & i & \rbrack &   & = &   & a & r & g & v & \lbrack & m & i & d & d & l & e &   & + &   & i & \rbrack & ; &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+  &   &   &   & a & r & g & v & \lbrack & m & i & d & d & l & e &   & + &   & i & \rbrack &   & = &   & t & e & m & ; &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+\} &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   &   \\
+  };
+
+  \draw [->] let \p1 = (wgetopt-2-3.west),
+                 \p2 = (exchange-1-1.west)
+              in (\p1) -- ++(-1cm, 0) -- (\x1 - 1cm, \y2) -- (\p2);
+  \node [above, anchor=west, black!50, xshift=0.5cm]
+        at (wgetopt-1-55.east)
+        {\texttt{wgetopt.cpp}};
+\end{tikzpicture}
+
+\end{document}
